@@ -3,6 +3,7 @@ from datetime import datetime
 import pandas as pd
 from pathlib import Path
 import requests
+from curl_cffi.requests.exceptions import HTTPError as CurlHTTPError
 
 # -------------------- parameters --------------------
 STI_TICKERS = [
@@ -12,7 +13,8 @@ STI_TICKERS = [
     "C07.SI","J36.SI","G13.SI","Y92.SI","F34.SI","V03.SI"
 ]
 
-OUTFILE = Path(r"C:\Users\Thanomsak Suwannoi\Downloads\codepython\sti_stats_esg.csv")
+OUTFILE = Path(__file__).parent / "sti_stats_esg.csv"
+
 TODAY   = datetime.now()
 
 # -------------------- helpers --------------------
@@ -22,37 +24,40 @@ def _grab_esg(df, metric):
         return None
     if metric in df.index:
         row = df.loc[metric]
-        return row["Value"] if "Value" in row else row.iloc[0]
+        return row.get("Value", row.iloc[0])
     if metric in df.columns:
         return df[metric].iloc[0]
     return None
 
-
 def fetch_one(tkr):
-    """Valuation + ESG for <tkr>; ESG handled gracefully if unavailable."""
+    """Fetch valuation + ESG for <tkr>; ESG errors are caught gracefully."""
     t   = yf.Ticker(tkr)
-    inf = t.info or {}
+    info = t.info or {}
 
     data = {
-        "Stock"        : tkr,
-        "MarketCap"    : inf.get("marketCap"),
-        "EnterpriseVal": inf.get("enterpriseValue"),
-        "TrailingPE"   : inf.get("trailingPE"),
-        "ForwardPE"    : inf.get("forwardPE"),
-        "PEG_5yr"      : inf.get("pegRatio"),                  # NEW
-        "Beta"         : inf.get("beta"),                      # NEW
-        "DividendYield": inf.get("dividendYield"),             # NEW (decimal, e.g., 0.038 ➜ 3.8 %)
-        "Price/Sales"  : inf.get("priceToSalesTrailing12Months"),
-        "Price/Book"   : inf.get("priceToBook"),
-        "EV/Revenue"   : inf.get("enterpriseToRevenue"),
-        "EV/EBITDA"    : inf.get("enterpriseToEbitda")
+        "Stock"            : tkr,
+        "MarketCap"        : info.get("marketCap"),
+        "EnterpriseVal"    : info.get("enterpriseValue"),
+        "TrailingPE"       : info.get("trailingPE"),
+        "ForwardPE"        : info.get("forwardPE"),
+        "PEG_5yr"          : info.get("pegRatio"),
+        "Beta"             : info.get("beta"),
+        "DividendYield"    : info.get("dividendYield"),
+        "Price/Sales"      : info.get("priceToSalesTrailing12Months"),
+        "Price/Book"       : info.get("priceToBook"),
+        "EV/Revenue"       : info.get("enterpriseToRevenue"),
+        "EV/EBITDA"        : info.get("enterpriseToEbitda")
     }
 
-    # ---------- ESG (wrapped in try/except) ----------
+    # —— ESG ——
     try:
-        esg = t.sustainability           # triggers the quoteSummary call
-    except requests.exceptions.HTTPError:
-        esg = None                       # e.g. 404 – no ESG coverage
+        esg = t.sustainability   # may raise HTTPError from requests or curl_cffi
+    except (requests.exceptions.HTTPError, CurlHTTPError) as e:
+        print(f"[Warning] No ESG for {tkr}: {e}")
+        esg = None
+    except Exception as e:
+        print(f"[Error] Unexpected ESG error for {tkr}: {e}")
+        esg = None
 
     data.update({
         "ESG_Total"        : _grab_esg(esg, "totalEsg"),
@@ -65,6 +70,8 @@ def fetch_one(tkr):
     return data
 
 # -------------------- run --------------------
-rows = [fetch_one(t) for t in STI_TICKERS]
-pd.DataFrame(rows).to_csv(OUTFILE, index=False, encoding="utf-8-sig")
-print(f"Saved {len(rows)} rows to {OUTFILE} on {TODAY:%d-%b-%Y}")
+if __name__ == "__main__":
+    rows = [fetch_one(t) for t in STI_TICKERS]
+    df   = pd.DataFrame(rows)
+    df.to_csv(OUTFILE, index=False, encoding="utf-8-sig")
+    print(f"Saved {len(rows)} rows to {OUTFILE} on {TODAY:%d-%b-%Y}")
