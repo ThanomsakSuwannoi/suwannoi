@@ -14,7 +14,7 @@ STI_TICKERS = [
 ]
 
 OUTFILE = Path(__file__).parent / "sti_stats_esg.csv"
-
+# OUTFILE = Path("sti_stats_esg.csv")  # for testing
 TODAY   = datetime.now()
 
 # -------------------- helpers --------------------
@@ -30,8 +30,8 @@ def _grab_esg(df, metric):
     return None
 
 def fetch_one(tkr):
-    """Fetch valuation + ESG for <tkr>; ESG errors are caught gracefully."""
-    t   = yf.Ticker(tkr)
+    """Valuation + ESG for <tkr>; ESG handled gracefully if unavailable."""
+    t    = yf.Ticker(tkr)
     info = t.info or {}
 
     data = {
@@ -40,7 +40,6 @@ def fetch_one(tkr):
         "EnterpriseVal"    : info.get("enterpriseValue"),
         "TrailingPE"       : info.get("trailingPE"),
         "ForwardPE"        : info.get("forwardPE"),
-        "PEG_5yr"          : info.get("pegRatio"),
         "Beta"             : info.get("beta"),
         "DividendYield"    : info.get("dividendYield"),
         "Price/Sales"      : info.get("priceToSalesTrailing12Months"),
@@ -51,7 +50,7 @@ def fetch_one(tkr):
 
     # —— ESG ——
     try:
-        esg = t.sustainability   # may raise HTTPError from requests or curl_cffi
+        esg = t.sustainability   # may throw HTTPError from requests or curl_cffi
     except (requests.exceptions.HTTPError, CurlHTTPError) as e:
         print(f"[Warning] No ESG for {tkr}: {e}")
         esg = None
@@ -73,5 +72,13 @@ def fetch_one(tkr):
 if __name__ == "__main__":
     rows = [fetch_one(t) for t in STI_TICKERS]
     df   = pd.DataFrame(rows)
-    df.to_csv(OUTFILE, index=False, encoding="utf-8-sig")
-    print(f"Saved {len(rows)} rows to {OUTFILE} on {TODAY:%d-%b-%Y}")
+
+    try:
+        df.to_csv(OUTFILE, index=False, encoding="utf-8-sig")
+        print(f"Saved {len(rows)} rows to {OUTFILE} on {TODAY:%d-%b-%Y}")
+    except OSError as e:
+        print(f"[Error] Could not write to {OUTFILE}: {e}")
+        # fallback to current working directory
+        fallback = Path.cwd() / OUTFILE.name
+        df.to_csv(fallback, index=False, encoding="utf-8-sig")
+        print(f"Saved instead to {fallback} on {TODAY:%d-%b-%Y}")
